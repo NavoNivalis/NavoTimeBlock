@@ -15,7 +15,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { CommandIcon, TimerIcon, CheckCircleIcon, BellIcon } from "@phosphor-icons/react"
+import { CommandIcon, TimerIcon, CheckCircleIcon, BellIcon, GearIcon, FolderIcon } from "@phosphor-icons/react"
 
 interface NotificationItem {
   id: string
@@ -29,9 +29,10 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   currentView: string
   onNavigate: (view: string) => void
   notifications: NotificationItem[]
+  onOpenSettings: () => void
 }
 
-export function AppSidebar({ currentView, onNavigate, notifications, ...props }: AppSidebarProps) {
+export function AppSidebar({ currentView, onNavigate, notifications, onOpenSettings, ...props }: AppSidebarProps) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -73,6 +74,16 @@ export function AppSidebar({ currentView, onNavigate, notifications, ...props }:
               >
                 <CheckCircleIcon className="size-4" />
                 <span>打卡</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={currentView === "projects"}
+                tooltip="项目"
+                onClick={() => onNavigate("projects")}
+              >
+                <FolderIcon className="size-4" />
+                <span>项目</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
@@ -118,6 +129,13 @@ export function AppSidebar({ currentView, onNavigate, notifications, ...props }:
             </div>
           </PopoverContent>
         </Popover>
+        <button
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-sidebar-accent"
+          onClick={onOpenSettings}
+        >
+          <GearIcon className="size-3.5" />
+          <span>设置</span>
+        </button>
       </SidebarFooter>
     </Sidebar>
   )

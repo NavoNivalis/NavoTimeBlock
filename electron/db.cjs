@@ -43,6 +43,19 @@ async function init(userDataPath) {
   try { db.run("ALTER TABLE tasks ADD COLUMN deleted_at TEXT") } catch (e) { /* 已存在 */ }
   try { db.run("ALTER TABLE tasks ADD COLUMN invested_minutes INTEGER DEFAULT 0") } catch (e) { /* 已存在 */ }
 
+  // 任务属性 9 字段（文本）
+  try { db.run("ALTER TABLE tasks ADD COLUMN goal TEXT") } catch (e) { /* 已存在 */ }
+  try { db.run("ALTER TABLE tasks ADD COLUMN start_action TEXT") } catch (e) { /* 已存在 */ }
+  try { db.run("ALTER TABLE tasks ADD COLUMN plan TEXT") } catch (e) { /* 已存在 */ }
+  try { db.run("ALTER TABLE tasks ADD COLUMN deliverable TEXT") } catch (e) { /* 已存在 */ }
+  try { db.run("ALTER TABLE tasks ADD COLUMN resources TEXT") } catch (e) { /* 已存在 */ }
+  try { db.run("ALTER TABLE tasks ADD COLUMN start_date TEXT") } catch (e) { /* 已存在 */ }
+  try { db.run("ALTER TABLE tasks ADD COLUMN deadline TEXT") } catch (e) { /* 已存在 */ }
+  try { db.run("ALTER TABLE tasks ADD COLUMN difficulties TEXT") } catch (e) { /* 已存在 */ }
+  try { db.run("ALTER TABLE tasks ADD COLUMN failure_criteria TEXT") } catch (e) { /* 已存在 */ }
+  try { db.run("ALTER TABLE tasks ADD COLUMN created_at TEXT") } catch (e) { /* 已存在 */ }
+  db.run("UPDATE tasks SET created_at = updated_at WHERE created_at IS NULL")
+
   // 确保旧数据 status 不为空
   db.run("UPDATE tasks SET status = 'active' WHERE status IS NULL")
 
@@ -98,6 +111,40 @@ async function init(userDataPath) {
   db.run("DROP TABLE IF EXISTS reports")
   db.run("DROP TABLE IF EXISTS analysis_results")
 
+  // 项目（标签）与任务-项目关联、AI 设置键值表
+  db.run(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `)
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS task_projects (
+      task_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      PRIMARY KEY (task_id, project_id),
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    )
+  `)
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `)
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS project_analyses (
+      project_id TEXT PRIMARY KEY,
+      analysis_json TEXT NOT NULL,
+      analyzed_at TEXT DEFAULT (datetime('now', 'localtime'))
+    )
+  `)
+
   saveToDisk()
 }
 
@@ -113,23 +160,48 @@ function saveToDisk() {
 
 function loadAll() {
   const taskRows = db.exec(
-    "SELECT id, name, parent_id, sort_order, status, completed_at, deleted_at, invested_minutes FROM tasks ORDER BY sort_order"
+    "SELECT id, name, parent_id, sort_order, status, completed_at, deleted_at, invested_minutes, created_at FROM tasks ORDER BY sort_order"
   )
   const tasks = taskRows.length > 0 ? rowsToObjects(taskRows[0]) : []
 
   const blockRows = db.exec("SELECT id, task_id, start_minutes, end_minutes, date FROM time_blocks ORDER BY start_minutes")
   const timeBlocks = blockRows.length > 0 ? rowsToObjects(blockRows[0]) : []
 
-  return { tasks, timeBlocks }
+  const attrRows = db.exec(
+    "SELECT id AS task_id, goal, start_action, plan, deliverable, resources, start_date, deadline, difficulties, failure_criteria FROM tasks"
+  )
+  const taskAttributes = attrRows.length > 0 ? rowsToObjects(attrRows[0]) : []
+
+  const tpRows = db.exec("SELECT task_id, project_id FROM task_projects")
+  const taskProjects = tpRows.length > 0 ? rowsToObjects(tpRows[0]) : []
+
+  return { tasks, timeBlocks, taskAttributes, taskProjects }
 }
 
 function saveTasks(taskList) {
-  // 保留已有任务的状态信息
+  // 保留已有任务的状态信息与属性字段
   const existing = {}
-  const oldRows = db.exec("SELECT id, status, completed_at, deleted_at, invested_minutes FROM tasks")
+  const oldRows = db.exec(
+    "SELECT id, status, completed_at, deleted_at, invested_minutes, goal, start_action, plan, deliverable, resources, start_date, deadline, difficulties, failure_criteria, created_at FROM tasks"
+  )
   if (oldRows.length > 0) {
     for (const row of oldRows[0].values) {
-      existing[row[0]] = { status: row[1], completed_at: row[2], deleted_at: row[3], invested_minutes: row[4] }
+      existing[row[0]] = {
+        status: row[1],
+        completed_at: row[2],
+        deleted_at: row[3],
+        invested_minutes: row[4],
+        goal: row[5],
+        start_action: row[6],
+        plan: row[7],
+        deliverable: row[8],
+        resources: row[9],
+        start_date: row[10],
+        deadline: row[11],
+        difficulties: row[12],
+        failure_criteria: row[13],
+        created_at: row[14],
+      }
     }
   }
 
@@ -137,7 +209,7 @@ function saveTasks(taskList) {
   db.run("DELETE FROM tasks WHERE status = 'active'")
 
   const stmt = db.prepare(
-    "INSERT OR REPLACE INTO tasks (id, name, parent_id, sort_order, status, completed_at, deleted_at, invested_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO tasks (id, name, parent_id, sort_order, status, completed_at, deleted_at, invested_minutes, goal, start_action, plan, deliverable, resources, start_date, deadline, difficulties, failure_criteria, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))"
   )
   const seen = new Set()
   saveTaskNodes(taskList, null, 0, stmt, existing, seen)
@@ -159,6 +231,16 @@ function saveTaskNodes(nodes, parentId, startIndex, stmt, existing, seen) {
       prev.completed_at || null,
       prev.deleted_at || null,
       prev.invested_minutes || 0,
+      prev.goal || null,
+      prev.start_action || null,
+      prev.plan || null,
+      prev.deliverable || null,
+      prev.resources || null,
+      prev.start_date || null,
+      prev.deadline || null,
+      prev.difficulties || null,
+      prev.failure_criteria || null,
+      prev.created_at || null,
     ])
     if (node.children && node.children.length > 0) {
       saveTaskNodes(node.children, node.id, 0, stmt, existing, seen)
@@ -371,6 +453,92 @@ function toggleHabitCheckin(habitId, date) {
   return { checked: true }
 }
 
+function saveTaskAttributes(taskId, attrs, projectIds) {
+  // 若任务尚未持久化（如 AI 创建时 saveTasks 尚未执行），先占位插入，
+  // 保证下方 UPDATE 能命中；后续 saveTasks 会用正确名称重建
+  db.run("INSERT OR IGNORE INTO tasks (id, name) VALUES (?, ?)", [taskId, ""])
+  db.run(
+    `UPDATE tasks SET
+      goal = ?, start_action = ?, plan = ?, deliverable = ?, resources = ?,
+      start_date = ?, deadline = ?, difficulties = ?, failure_criteria = ?
+    WHERE id = ?`,
+    [
+      attrs.goal ?? null,
+      attrs.startAction ?? null,
+      attrs.plan ?? null,
+      attrs.deliverable ?? null,
+      attrs.resources ?? null,
+      attrs.startDate ?? null,
+      attrs.deadline ?? null,
+      attrs.difficulties ?? null,
+      attrs.failureCriteria ?? null,
+      taskId,
+    ]
+  )
+
+  db.run("DELETE FROM task_projects WHERE task_id = ?", [taskId])
+  const stmt = db.prepare("INSERT INTO task_projects (task_id, project_id) VALUES (?, ?)")
+  for (const pid of projectIds || []) {
+    stmt.run([taskId, pid])
+  }
+  stmt.free()
+  saveToDisk()
+}
+
+function loadProjects() {
+  const rows = db.exec("SELECT id, name FROM projects ORDER BY created_at")
+  return rows.length > 0 ? rowsToObjects(rows[0]) : []
+}
+
+function createProject(name) {
+  const crypto = require("crypto")
+  const id = crypto.randomUUID()
+  db.run("INSERT INTO projects (id, name) VALUES (?, ?)", [id, name])
+  saveToDisk()
+  return { id, name }
+}
+
+function deleteProject(id) {
+  db.run("DELETE FROM projects WHERE id = ?", [id])
+  db.run("DELETE FROM project_analyses WHERE project_id = ?", [id])
+  saveToDisk()
+}
+
+function saveSetting(key, value) {
+  db.run("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", [key, value])
+  saveToDisk()
+}
+
+function loadSettings() {
+  const rows = db.exec("SELECT key, value FROM settings")
+  if (rows.length === 0) return {}
+  const obj = {}
+  for (const row of rows[0].values) {
+    obj[row[0]] = row[1]
+  }
+  return obj
+}
+
+function saveProjectAnalysis(projectId, analysis) {
+  db.run(
+    "INSERT OR REPLACE INTO project_analyses (project_id, analysis_json, analyzed_at) VALUES (?, ?, datetime('now', 'localtime'))",
+    [projectId, JSON.stringify(analysis)]
+  )
+  saveToDisk()
+}
+
+function loadProjectAnalysis(projectId) {
+  const stmt = db.prepare("SELECT analysis_json, analyzed_at FROM project_analyses WHERE project_id = ?")
+  stmt.bind([projectId])
+  let result = null
+  if (stmt.step()) {
+    const row = stmt.getAsObject()
+    result = { analysis: JSON.parse(row.analysis_json), analyzedAt: row.analyzed_at }
+  }
+  stmt.free()
+  return result
+}
+
 function rowsToObjects(result) {
   const cols = result.columns
   return result.values.map((row) => {
@@ -403,4 +571,12 @@ module.exports = {
   permanentlyDeleteAllDeletedHabits,
   loadHabitCheckins,
   toggleHabitCheckin,
+  saveTaskAttributes,
+  loadProjects,
+  createProject,
+  deleteProject,
+  saveSetting,
+  loadSettings,
+  saveProjectAnalysis,
+  loadProjectAnalysis,
 }

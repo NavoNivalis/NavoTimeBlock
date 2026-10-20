@@ -4,7 +4,7 @@ import type { CreateHandler, DeleteHandler, MoveHandler, RenameHandler } from "r
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
-import { PlusIcon, TrashIcon, CaretDownIcon, CaretRightIcon, PencilSimpleIcon } from "@phosphor-icons/react"
+import { PlusIcon, TrashIcon, CaretDownIcon, CaretRightIcon, PencilSimpleIcon, SparkleIcon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { useRef, useEffect, useState, useCallback } from "react"
 import { CreateTaskDialog } from "@/components/create-task-dialog"
@@ -36,6 +36,12 @@ interface TaskTreeProps {
   onComplete?: (taskId: string) => void
   onSoftDelete?: (taskId: string) => void
   onCreateTask: (name: string) => void
+  /** 点击选中某个任务（用于打卡页右侧详情联动） */
+  onSelect?: (taskId: string) => void
+  /** 右键某个任务（用于编辑任务属性） */
+  onContextMenu?: (taskId: string) => void
+  /** AI 生成任务（仅任务页传入时显示按钮） */
+  onAICreate?: () => void
 }
 
 function NodeEdit({ node }: { node: NodeRendererProps<Task>["node"] }) {
@@ -60,7 +66,7 @@ function NodeEdit({ node }: { node: NodeRendererProps<Task>["node"] }) {
   )
 }
 
-export function TaskTree({ tasks, handlers, treeRef, badgeText, showFilter = true, taskFilter, onTaskFilterChange, onRequestCreateInAll, autoCreate, onAutoCreateHandled, checkState, onComplete, onSoftDelete, onCreateTask }: TaskTreeProps) {
+export function TaskTree({ tasks, handlers, treeRef, badgeText, showFilter = true, taskFilter, onTaskFilterChange, onRequestCreateInAll, autoCreate, onAutoCreateHandled, checkState, onComplete, onSoftDelete, onCreateTask, onSelect, onContextMenu, onAICreate }: TaskTreeProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [treeHeight, setTreeHeight] = useState(400)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -120,12 +126,14 @@ export function TaskTree({ tasks, handlers, treeRef, badgeText, showFilter = tru
         data-task-id={node.data.id}
         data-task-name={node.data.name}
         className="py-1 text-sm"
+        onContextMenu={(e) => { e.preventDefault(); onContextMenu?.(node.data.id) }}
       >
         <div
           className={cn(
             "group flex items-start gap-1 rounded-md px-1",
             "hover:bg-accent/70"
           )}
+          onClick={() => onSelect?.(node.data.id)}
         >
           {/* Toggle Arrow */}
           {node.data.children?.length ? (
@@ -144,6 +152,7 @@ export function TaskTree({ tasks, handlers, treeRef, badgeText, showFilter = tru
             className="size-4 shrink-0"
             checked={checked}
             onCheckedChange={handleCheck}
+            onClick={(e) => e.stopPropagation()}
           />
 
           {/* Name or Edit Input */}
@@ -213,7 +222,12 @@ export function TaskTree({ tasks, handlers, treeRef, badgeText, showFilter = tru
             </Button>
           </div>
         )}
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-0.5">
+          {onAICreate && (
+            <Button variant="ghost" size="icon" className="size-6" onClick={onAICreate}>
+              <SparkleIcon className="size-3.5" />
+            </Button>
+          )}
           <Button variant="ghost" size="icon" className="size-6" onClick={handleAddClick}>
             <PlusIcon className="size-3.5" />
           </Button>

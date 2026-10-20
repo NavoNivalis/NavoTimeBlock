@@ -1,4 +1,4 @@
-import type { Task, TimeBlock } from "./task"
+import type { Task, TimeBlock, TaskAttributes, Project, AISuggestedTask, ProjectAnalysis, ProjectAnalysisTask } from "./task"
 
 interface DBTimeBlockRow {
   id: string
@@ -17,6 +17,25 @@ interface DBTaskRow {
   completed_at: string | null
   deleted_at: string | null
   invested_minutes: number
+  created_at: string | null
+}
+
+interface DBTaskAttributeRow {
+  task_id: string
+  goal: string | null
+  start_action: string | null
+  plan: string | null
+  deliverable: string | null
+  resources: string | null
+  start_date: string | null
+  deadline: string | null
+  difficulties: string | null
+  failure_criteria: string | null
+}
+
+interface DBTaskProjectRow {
+  task_id: string
+  project_id: string
 }
 
 interface DBHabitRow {
@@ -38,6 +57,8 @@ interface ElectronAPI {
   loadAll: () => Promise<{
     tasks: DBTaskRow[]
     timeBlocks: DBTimeBlockRow[]
+    taskAttributes: DBTaskAttributeRow[]
+    taskProjects: DBTaskProjectRow[]
   }>
   saveTasks: (tasks: Task[]) => Promise<void>
   saveTimeBlocks: (blocks: TimeBlock[]) => Promise<void>
@@ -60,6 +81,16 @@ interface ElectronAPI {
   permanentlyDeleteAllDeletedHabits: () => Promise<number>
   loadHabitCheckins: () => Promise<DBHabitCheckinRow[]>
   toggleHabitCheckin: (habitId: string, date: string) => Promise<{ checked: boolean }>
+  saveTaskAttributes: (taskId: string, attrs: TaskAttributes, projectIds: string[]) => Promise<void>
+  loadProjects: () => Promise<Project[]>
+  createProject: (name: string) => Promise<Project>
+  deleteProject: (id: string) => Promise<void>
+  saveSetting: (key: string, value: string) => Promise<void>
+  loadSettings: () => Promise<Record<string, string>>
+  aiGenerateTask: (text: string) => Promise<AISuggestedTask>
+  analyzeProject: (projectName: string, tasks: ProjectAnalysisTask[]) => Promise<ProjectAnalysis>
+  saveProjectAnalysis: (projectId: string, analysis: ProjectAnalysis) => Promise<void>
+  loadProjectAnalysis: (projectId: string) => Promise<{ analysis: ProjectAnalysis; analyzedAt: string } | null>
 }
 
 declare global {

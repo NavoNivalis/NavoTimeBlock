@@ -203,6 +203,7 @@ export function CheckinTracker({ habits, onHabitsChanged, onSoftDeleteHabit }: C
           checkState={checkState}
           onSoftDelete={onSoftDeleteHabit}
           onCreateTask={createTask}
+          onSelect={(id) => setSelectedId(id)}
         />
       </div>
 

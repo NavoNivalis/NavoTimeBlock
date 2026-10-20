@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, Notification, Menu } = require("electron")
 const path = require("path")
 const db = require("./db.cjs")
+const ai = require("./ai.cjs")
 
 const isDev = !app.isPackaged
 app.commandLine.appendSwitch("disable-gpu")
@@ -115,6 +116,48 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("db:toggleHabitCheckin", (_event, habitId, date) => {
     return db.toggleHabitCheckin(habitId, date)
+  })
+
+  ipcMain.handle("db:saveTaskAttributes", (_event, taskId, attrs, projectIds) => {
+    db.saveTaskAttributes(taskId, attrs, projectIds)
+  })
+
+  ipcMain.handle("db:loadProjects", () => {
+    return db.loadProjects()
+  })
+
+  ipcMain.handle("db:createProject", (_event, name) => {
+    return db.createProject(name)
+  })
+
+  ipcMain.handle("db:deleteProject", (_event, id) => {
+    db.deleteProject(id)
+  })
+
+  ipcMain.handle("db:saveSetting", (_event, key, value) => {
+    db.saveSetting(key, value)
+  })
+
+  ipcMain.handle("db:loadSettings", () => {
+    return db.loadSettings()
+  })
+
+  ipcMain.handle("ai:generateTask", async (_event, text) => {
+    const settings = db.loadSettings()
+    return ai.generateTask(text, settings)
+  })
+
+  ipcMain.handle("ai:analyzeProject", async (_event, projectName, tasks) => {
+    const settings = db.loadSettings()
+    return ai.analyzeProject(projectName, tasks, settings)
+  })
+
+  ipcMain.handle("db:saveProjectAnalysis", (_event, projectId, analysis) => {
+    db.saveProjectAnalysis(projectId, analysis)
+  })
+
+  ipcMain.handle("db:loadProjectAnalysis", (_event, projectId) => {
+    return db.loadProjectAnalysis(projectId)
   })
 
   // 启动时清理超过30天的已删除任务

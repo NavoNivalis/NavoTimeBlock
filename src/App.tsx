@@ -13,10 +13,14 @@ import { type TreeApi } from "react-arborist"
 import { useSimpleTreeUUID } from "@/hooks/use-simple-tree-uuid"
 import { TaskTree } from "@/components/task-tree"
 import { CheckinTracker } from "@/components/checkin-tracker"
+import { TaskAttributeView, TaskAttributeEdit } from "@/components/task-attributes"
+import { AiTaskDialog } from "@/components/ai-task-dialog"
+import { SettingsDialog } from "@/components/settings-dialog"
+import { ProjectsView } from "@/components/projects-view"
 import { Toaster } from "@/components/ui/sonner"
 import { toast } from "sonner"
 import { TrashIcon } from "@phosphor-icons/react"
-import type { Task, TimeBlock } from "@/types/task"
+import type { Task, TimeBlock, TaskAttributes, Project, AISuggestedTask } from "@/types/task"
 import { playNotificationSound } from "@/lib/notification-sound"
 
 interface NotificationItem {
@@ -36,7 +40,7 @@ const defaultData: Task[] = [
   { id: "3", name: "生活" },
 ]
 
-type DBTaskRow = { id: string; name: string; parent_id: string | null; status: string; completed_at: string | null; deleted_at: string | null; invested_minutes: number }
+type DBTaskRow = { id: string; name: string; parent_id: string | null; status: string; completed_at: string | null; deleted_at: string | null; invested_minutes: number; created_at: string | null }
 type DBHabitRow = { id: string; name: string; parent_id: string | null; status: string; deleted_at: string | null }
 
 function buildTree(rows: { id: string; name: string; parent_id: string | null; status: string }[], status: string): Task[] {
@@ -140,13 +144,17 @@ export default function App() {
     timeBlocks: TimeBlock[]
     allRows: DBTaskRow[]
     habitRows: DBHabitRow[]
+    taskAttributes: Record<string, TaskAttributes>
+    taskProjects: Record<string, string[]>
+    projects: Project[]
   } | null>(null)
 
   useEffect(() => {
     Promise.all([
       window.electronAPI.loadAll(),
       window.electronAPI.loadHabits(),
-    ]).then(([result, habits]) => {
+      window.electronAPI.loadProjects(),
+    ]).then(([result, habits, projects]) => {
       const isFirstRun = result.tasks.length === 0
       const allRows: DBTaskRow[] = result.tasks.map((r) => ({
         id: r.id,
@@ -181,7 +189,29 @@ export default function App() {
         deleted_at: r.deleted_at,
       }))
 
-      setInitialData({ activeTasks, timeBlocks, allRows, habitRows })
+      const taskAttributes: Record<string, TaskAttributes> = {}
+      for (const a of result.taskAttributes) {
+        taskAttributes[a.task_id] = {
+          goal: a.goal ?? undefined,
+          startAction: a.start_action ?? undefined,
+          plan: a.plan ?? undefined,
+          deliverable: a.deliverable ?? undefined,
+          resources: a.resources ?? undefined,
+          startDate: a.start_date ?? undefined,
+          deadline: a.deadline ?? undefined,
+          difficulties: a.difficulties ?? undefined,
+          failureCriteria: a.failure_criteria ?? undefined,
+        }
+      }
+
+      const taskProjects: Record<string, string[]> = {}
+      for (const tp of result.taskProjects) {
+        const arr = taskProjects[tp.task_id] || []
+        arr.push(tp.project_id)
+        taskProjects[tp.task_id] = arr
+      }
+
+      setInitialData({ activeTasks, timeBlocks, allRows, habitRows, taskAttributes, taskProjects, projects })
     })
   }, [])
 
@@ -200,6 +230,9 @@ export default function App() {
       initialBlocks={initialData.timeBlocks}
       initialAllRows={initialData.allRows}
       initialHabitRows={initialData.habitRows}
+      initialTaskAttributes={initialData.taskAttributes}
+      initialTaskProjects={initialData.taskProjects}
+      initialProjects={initialData.projects}
     />
   )
 }
@@ -208,13 +241,19 @@ function AppContent({
   initialBlocks,
   initialAllRows,
   initialHabitRows,
+  initialTaskAttributes,
+  initialTaskProjects,
+  initialProjects,
 }: {
   initialActiveTasks: Task[]
   initialBlocks: TimeBlock[]
   initialAllRows: DBTaskRow[]
   initialHabitRows: DBHabitRow[]
+  initialTaskAttributes: Record<string, TaskAttributes>
+  initialTaskProjects: Record<string, string[]>
+  initialProjects: Project[]
 }) {
-  const [currentView, setCurrentView] = useState<"tasks" | "habits">("tasks")
+  const [currentView, setCurrentView] = useState<"tasks" | "habits" | "projects">("tasks")
   const [activeTaskTab, setActiveTaskTab] = useState<"active" | "completed" | "deleted">("active")
   const [allTaskRows, setAllTaskRows] = useState<DBTaskRow[]>(initialAllRows)
   const [treeKey, setTreeKey] = useState(0)
@@ -226,6 +265,12 @@ function AppContent({
   const [selectedDate, setSelectedDate] = useState<string>(todayStr())
   const [taskFilter, setTaskFilter] = useState<"today" | "all">("today")
   const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>(initialBlocks)
+  const [taskAttributes, setTaskAttributes] = useState<Record<string, TaskAttributes>>(initialTaskAttributes)
+  const [taskProjects, setTaskProjects] = useState<Record<string, string[]>>(initialTaskProjects)
+  const [projects, setProjects] = useState<Project[]>(initialProjects)
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const dateList = useMemo(() => getDateList(), [])
 
@@ -250,6 +295,18 @@ function AppContent({
   }, [activeTasks, taskFilter, todayTaskIds])
   const completedRows = useMemo(() => allTaskRows.filter((r) => r.status === "completed"), [allTaskRows])
   const deletedRows = useMemo(() => allTaskRows.filter((r) => r.status === "deleted"), [allTaskRows])
+
+  const taskNames = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const r of allTaskRows) map[r.id] = r.name
+    return map
+  }, [allTaskRows])
+
+  const taskCreatedAt = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const r of allTaskRows) map[r.id] = r.created_at
+    return map
+  }, [allTaskRows])
 
   const activeHabits = useMemo(() => buildTree(habitRows, "active"), [habitRows])
   const deletedHabitRows = useMemo(() => habitRows.filter((r) => r.status === "deleted"), [habitRows])
@@ -377,10 +434,45 @@ function AppContent({
       const merged = activeRows.map((r) => ({
         ...r,
         invested_minutes: prevMap.get(r.id)?.invested_minutes || 0,
+        created_at: prevMap.get(r.id)?.created_at || null,
       }))
       // Keep non-active rows + keep invested_minutes from active rows not in tree
       const nonActive = prev.filter((r) => !activeIds.has(r.id))
       return [...merged, ...nonActive]
+    })
+  }, [])
+
+  // ---- 任务属性 / 项目 ----
+  const handleSelectTask = useCallback((taskId: string) => {
+    setSelectedTaskId(taskId)
+  }, [])
+
+  const handleEditTask = useCallback((taskId: string) => {
+    setEditingTaskId(taskId)
+  }, [])
+
+  const handleSaveAttributes = useCallback(async (taskId: string, attrs: TaskAttributes, projectIds: string[]) => {
+    await window.electronAPI.saveTaskAttributes(taskId, attrs, projectIds)
+    setTaskAttributes((prev) => ({ ...prev, [taskId]: attrs }))
+    setTaskProjects((prev) => ({ ...prev, [taskId]: projectIds }))
+  }, [])
+
+  const handleCreateProject = useCallback(async (name: string) => {
+    const project = await window.electronAPI.createProject(name)
+    setProjects((prev) => [...prev, project])
+    return project
+  }, [])
+
+  const handleDeleteProject = useCallback(async (id: string) => {
+    await window.electronAPI.deleteProject(id)
+    setProjects((prev) => prev.filter((p) => p.id !== id))
+    setTaskProjects((prev) => {
+      const next: Record<string, string[]> = {}
+      for (const [taskId, pids] of Object.entries(prev)) {
+        const filtered = pids.filter((pid) => pid !== id)
+        if (filtered.length > 0) next[taskId] = filtered
+      }
+      return next
     })
   }, [])
 
@@ -703,18 +795,22 @@ function AppContent({
     }
   }, [])
 
+  const selectedTask = selectedTaskId ? allTaskRows.find((r) => r.id === selectedTaskId) : undefined
+  const editingTask = editingTaskId ? allTaskRows.find((r) => r.id === editingTaskId) : undefined
+
   return (
     <SidebarProvider className="h-svh">
       <AppSidebar
         currentView={currentView}
-        onNavigate={(v: string) => setCurrentView(v as "tasks" | "habits")}
+        onNavigate={(v: string) => setCurrentView(v as "tasks" | "habits" | "projects")}
         notifications={notifications}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       <SidebarInset>
         <header className="flex h-12 items-center gap-2 border-b px-4">
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="h-4" />
-          <span className="text-sm font-medium">{currentView === "tasks" ? "任务" : "打卡"}</span>
+          <span className="text-sm font-medium">{currentView === "tasks" ? "任务" : currentView === "habits" ? "打卡" : "项目"}</span>
           {currentView === "tasks" && (
             <>
               <Separator orientation="vertical" className="ml-1 h-4" />
@@ -785,6 +881,9 @@ function AppContent({
               onRequestCreateInAll={() => { setTaskFilter("all"); setTreeKey((k) => k + 1); setAutoCreate(true) }}
               autoCreate={autoCreate}
               onAutoCreateHandled={() => setAutoCreate(false)}
+              onSelect={handleSelectTask}
+              onContextMenu={handleEditTask}
+              onSaveTaskAttributes={handleSaveAttributes}
             />
             {activeTaskTab === "completed" && (
               <CompletedView
@@ -804,7 +903,7 @@ function AppContent({
               />
             )}
           </>
-        ) : (
+        ) : currentView === "habits" ? (
           <>
             {activeHabitTab === "active" ? (
               <div className="flex-1 overflow-hidden">
@@ -824,6 +923,16 @@ function AppContent({
               />
             )}
           </>
+        ) : (
+          <ProjectsView
+            projects={projects}
+            taskProjects={taskProjects}
+            taskNames={taskNames}
+            taskAttributes={taskAttributes}
+            taskCreatedAt={taskCreatedAt}
+            onCreateProject={handleCreateProject}
+            onDeleteProject={handleDeleteProject}
+          />
         )}
       </SidebarInset>
 
@@ -872,6 +981,35 @@ function AppContent({
         </DialogContent>
       </Dialog>
 
+      {/* 任务属性：左键只读展示 */}
+      {selectedTask && (
+        <TaskAttributeView
+          taskName={selectedTask.name}
+          attributes={taskAttributes[selectedTask.id] ?? {}}
+          projectNames={(taskProjects[selectedTask.id] ?? []).map((pid) => projects.find((p) => p.id === pid)?.name).filter((n): n is string => !!n)}
+          onClose={() => setSelectedTaskId(null)}
+        />
+      )}
+
+      {/* 任务属性：右键编辑 */}
+      {editingTask && (
+        <TaskAttributeEdit
+          key={editingTask.id}
+          taskName={editingTask.name}
+          attributes={taskAttributes[editingTask.id] ?? {}}
+          projectIds={taskProjects[editingTask.id] ?? []}
+          projects={projects}
+          onSave={(attrs, pids) => { handleSaveAttributes(editingTask.id, attrs, pids); setEditingTaskId(null) }}
+          onClose={() => setEditingTaskId(null)}
+          onCreateProject={handleCreateProject}
+        />
+      )}
+
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
+
       <Toaster position="bottom-left" duration={5000} closeButton />
     </SidebarProvider>
   )
@@ -905,6 +1043,9 @@ interface ActiveTaskPanelProps {
   onRequestCreateInAll: () => void
   autoCreate?: boolean
   onAutoCreateHandled?: () => void
+  onSelect: (taskId: string) => void
+  onContextMenu: (taskId: string) => void
+  onSaveTaskAttributes: (taskId: string, attrs: TaskAttributes, projectIds: string[]) => Promise<void>
 }
 
 function ActiveTaskPanel({
@@ -934,8 +1075,12 @@ function ActiveTaskPanel({
   onRequestCreateInAll,
   autoCreate,
   onAutoCreateHandled,
+  onSelect,
+  onContextMenu,
+  onSaveTaskAttributes,
 }: ActiveTaskPanelProps) {
   const [tasks, handlers] = useSimpleTreeUUID(activeTasks)
+  const [aiOpen, setAiOpen] = useState(false)
 
   // ---- Save tree changes + sync memory ----
   const treeMounted = useRef(false)
@@ -951,6 +1096,12 @@ function ActiveTaskPanel({
   const handleCreateTask = useCallback((name: string) => {
     handlers.createWithName(name)
   }, [handlers])
+
+  const handleAICreate = useCallback((suggestion: AISuggestedTask) => {
+    const id = handlers.createWithName(suggestion.name)
+    onSaveTaskAttributes(id, suggestion, [])
+    setAiOpen(false)
+  }, [handlers, onSaveTaskAttributes])
 
   return (
     <div className={cn("flex flex-1 overflow-hidden", className)}>
@@ -971,6 +1122,9 @@ function ActiveTaskPanel({
           onComplete={onComplete}
           onSoftDelete={onSoftDelete}
           onCreateTask={handleCreateTask}
+          onSelect={onSelect}
+          onContextMenu={onContextMenu}
+          onAICreate={() => setAiOpen(true)}
         />
       </div>
       <div
@@ -996,6 +1150,14 @@ function ActiveTaskPanel({
           onTimelineDrop={onTimelineDrop}
         />
       </div>
+
+      {aiOpen && (
+        <AiTaskDialog
+          open={aiOpen}
+          onClose={() => setAiOpen(false)}
+          onCreate={handleAICreate}
+        />
+      )}
     </div>
   )
 }
